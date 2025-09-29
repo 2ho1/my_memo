@@ -1,0 +1,479 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { useSession, signOut } from "next-auth/react"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Plus, Search, Edit3, Trash2, Pin, Calendar, PinOff } from "lucide-react"
+import { cn } from "@/lib/utils"
+import UserMenu from "@/components/user-menu"
+
+interface Note {
+  id: string
+  title: string
+  content: string
+  createdAt: Date | string
+  isFavorite: boolean
+  color: string
+}
+
+const noteColors = [
+  "bg-yellow-100 border-yellow-200",
+  "bg-pink-100 border-pink-200",
+  "bg-blue-100 border-blue-200",
+  "bg-green-100 border-green-200",
+  "bg-purple-100 border-purple-200",
+  "bg-orange-100 border-orange-200",
+]
+
+export default function MemoApp() {
+  const { data: session, status } = useSession()
+  const [notes, setNotes] = useState<Note[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Load notes from database
+  useEffect(() => {
+    const fetchNotes = async () => {
+      try {
+        const response = await fetch("/api/notes")
+        if (response.ok) {
+          const data = await response.json()
+          setNotes(data.notes || [])
+        }
+      } catch (error) {
+        console.error("Failed to fetch notes:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    if (status === "authenticated") {
+      fetchNotes()
+    } else if (status === "unauthenticated") {
+      setIsLoading(false)
+    }
+  }, [status])
+
+  const [searchTerm, setSearchTerm] = useState("")
+  const [isCreating, setIsCreating] = useState(false)
+  const [newNote, setNewNote] = useState({ title: "", content: "" })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [noteToDelete, setNoteToDelete] = useState<Note | null>(null)
+  const [showPinnedOnly, setShowPinnedOnly] = useState(false)
+
+  // 고정된 메모와 일반 메모 분리
+  const pinnedNotes = notes.filter(note => note.isFavorite)
+  const regularNotes = notes.filter(note => !note.isFavorite)
+
+  const filteredRegularNotes = regularNotes.filter((note) => {
+    // 고정 필터
+    if (showPinnedOnly && !note.isFavorite) {
+      return false
+    }
+    
+    // 검색 필터
+    return (
+      note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      note.content.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  })
+
+  const handleCreateNote = async () => {
+    if (newNote.title.trim() || newNote.content.trim()) {
+      try {
+        const response = await fetch("/api/notes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: newNote.title || "제목 없음",
+            content: newNote.content,
+            color: noteColors[Math.floor(Math.random() * noteColors.length)],
+          }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setNotes([data.note, ...notes])
+          setNewNote({ title: "", content: "" })
+          setIsCreating(false)
+        }
+      } catch (error) {
+        console.error("Failed to create note:", error)
+      }
+    }
+  }
+
+  const handleDeleteNote = async (id: string) => {
+    try {
+      const response = await fetch(`/api/notes/${id}`, {
+        method: "DELETE",
+      })
+
+      if (response.ok) {
+        setNotes(notes.filter((note) => note.id !== id))
+        setDeleteDialogOpen(false)
+        setNoteToDelete(null)
+      }
+    } catch (error) {
+      console.error("Failed to delete note:", error)
+    }
+  }
+
+  const openDeleteDialog = (note: Note) => {
+    setNoteToDelete(note)
+    setDeleteDialogOpen(true)
+  }
+
+  const cancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setNoteToDelete(null)
+  }
+
+  const togglePin = async (id: string) => {
+    try {
+      const note = notes.find((n) => n.id === id)
+      if (!note) return
+
+      const response = await fetch(`/api/notes/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          isFavorite: !note.isFavorite,
+        }),
+      })
+
+      if (response.ok) {
+        setNotes(notes.map((note) => (note.id === id ? { ...note, isFavorite: !note.isFavorite } : note)))
+      }
+    } catch (error) {
+      console.error("Failed to toggle pin:", error)
+    }
+  }
+
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+    return dateObj.toLocaleDateString("ko-KR", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  }
+
+  if (status === "loading" || isLoading) {
+    return (
+      <div className="min-h-screen gradient-bg flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">로딩 중...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen gradient-bg flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold text-primary mb-4">✨ 메모장</h1>
+          <p className="text-muted-foreground mb-8">로그인하여 메모를 작성해보세요</p>
+          <div className="flex gap-4 justify-center">
+            <Button onClick={() => window.location.href = "/auth/signin"} className="bg-primary hover:bg-primary/90">
+              로그인
+            </Button>
+            <Button onClick={() => window.location.href = "/auth/signup"} variant="outline" className="glass-effect border-0">
+              회원가입
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen gradient-bg">
+      <div className="container mx-auto px-4 py-8 max-w-6xl">
+        {/* Header */}
+        <div className="mb-8">
+          {/* Title - Centered */}
+          <div className="text-center mb-6">
+            <h1 className="text-3xl sm:text-4xl font-bold text-primary mb-2 text-balance">✨ 나의 메모장</h1>
+            <p className="text-muted-foreground text-base sm:text-lg">{"생각을 기록하고 아이디어를 정리해보세요"}</p>
+          </div>
+          
+          {/* User Profile - Below title */}
+          <div className="flex justify-between items-center">
+            {/* 고정 토글 버튼 */}
+            <Button
+              variant={showPinnedOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowPinnedOnly(!showPinnedOnly)}
+              className={cn(
+                "gap-2",
+                showPinnedOnly 
+                  ? "bg-blue-500 hover:bg-blue-600 text-white" 
+                  : "glass-effect border-0"
+              )}
+            >
+              <Pin className={cn("w-4 h-4", showPinnedOnly && "fill-current")} />
+              <span className="hidden sm:inline">
+                {showPinnedOnly ? "모든 메모" : "고정된 메모만"}
+              </span>
+            </Button>
+
+            <div className="flex items-center gap-2 sm:gap-4">
+              <span className="text-sm text-muted-foreground hidden sm:block">
+                안녕하세요, {session.user?.name}님!
+              </span>
+              <UserMenu />
+            </div>
+          </div>
+        </div>
+
+        {/* Search and Create */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-8">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+            <Input
+              placeholder="메모 검색..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 glass-effect border-0 shadow-lg"
+            />
+          </div>
+          <Button onClick={() => setIsCreating(true)} className="bg-primary hover:bg-primary/90 shadow-lg">
+            <Plus className="w-4 h-4 mr-2" />새 메모
+          </Button>
+        </div>
+
+        {/* Create Note Form */}
+        {isCreating && (
+          <Card className="p-6 mb-8 glass-effect border-0 shadow-xl">
+            <div className="space-y-4">
+              <Input
+                placeholder="메모 제목을 입력하세요..."
+                value={newNote.title}
+                onChange={(e) => setNewNote({ ...newNote, title: e.target.value })}
+                className="text-lg font-medium border-0 bg-transparent focus:ring-2 focus:ring-primary/20"
+              />
+              <Textarea
+                placeholder="내용을 입력하세요..."
+                value={newNote.content}
+                onChange={(e) => setNewNote({ ...newNote, content: e.target.value })}
+                className="min-h-32 border-0 bg-transparent focus:ring-2 focus:ring-primary/20 resize-none"
+              />
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsCreating(false)
+                    setNewNote({ title: "", content: "" })
+                  }}
+                  className="glass-effect border-0"
+                >
+                  취소
+                </Button>
+                <Button onClick={handleCreateNote} className="bg-primary hover:bg-primary/90">
+                  저장
+                </Button>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Pinned Notes Section */}
+        {pinnedNotes.length > 0 && !showPinnedOnly && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <Pin className="w-5 h-5 text-blue-500" />
+              <h2 className="text-xl font-semibold text-foreground">고정된 메모</h2>
+              <span className="text-sm text-muted-foreground">({pinnedNotes.length})</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {pinnedNotes.map((note) => (
+                <Card
+                  key={note.id}
+                  className={cn(
+                    "p-6 glass-effect border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 border-l-4 border-l-blue-500",
+                    note.color,
+                  )}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="font-semibold text-lg text-card-foreground line-clamp-1 text-balance">{note.title}</h3>
+                    <div className="flex gap-1 ml-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => togglePin(note.id)}
+                        className="w-8 h-8 p-0 text-blue-500 hover:bg-blue-50"
+                      >
+                        <Pin className="w-4 h-4 fill-current" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openDeleteDialog(note)}
+                        className="w-8 h-8 p-0 text-muted-foreground hover:text-destructive hover:bg-white/50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <p className="text-card-foreground/80 text-sm mb-4 line-clamp-4 leading-relaxed whitespace-pre-wrap">
+                    {note.content}
+                  </p>
+
+                  <div className="flex items-center text-xs text-muted-foreground">
+                    <Calendar className="w-3 h-3 mr-1" />
+                    {formatDate(note.createdAt)}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Regular Notes Section */}
+        <div className="mb-8">
+          {!showPinnedOnly && (
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="text-xl font-semibold text-foreground">모든 메모</h2>
+              <span className="text-sm text-muted-foreground">({regularNotes.length})</span>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredRegularNotes.map((note) => (
+            <Card
+              key={note.id}
+              className={cn(
+                "p-6 glass-effect border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1",
+                note.color,
+              )}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <h3 className="font-semibold text-lg text-card-foreground line-clamp-1 text-balance">{note.title}</h3>
+                <div className="flex gap-1 ml-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => togglePin(note.id)}
+                    className={cn(
+                      "w-8 h-8 p-0 hover:bg-white/50",
+                      note.isFavorite ? "text-blue-500" : "text-muted-foreground",
+                    )}
+                  >
+                    <Pin className={cn("w-4 h-4", note.isFavorite && "fill-current")} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openDeleteDialog(note)}
+                    className="w-8 h-8 p-0 text-muted-foreground hover:text-destructive hover:bg-white/50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-card-foreground/80 text-sm mb-4 line-clamp-4 leading-relaxed whitespace-pre-wrap">
+                {note.content}
+              </p>
+
+              <div className="flex items-center text-xs text-muted-foreground">
+                <Calendar className="w-3 h-3 mr-1" />
+                {formatDate(note.createdAt)}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Empty State */}
+        {filteredRegularNotes.length === 0 && pinnedNotes.length === 0 && (
+          <div className="text-center py-16">
+            <div className="w-24 h-24 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Edit3 className="w-12 h-12 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold text-foreground mb-2">
+              첫 번째 메모를 작성해보세요
+            </h3>
+            <p className="text-muted-foreground mb-6">
+              새로운 아이디어나 할 일을 기록해보세요
+            </p>
+            <Button onClick={() => setIsCreating(true)} className="bg-primary hover:bg-primary/90">
+              <Plus className="w-4 h-4 mr-2" />첫 메모 작성하기
+            </Button>
+          </div>
+        )}
+
+        {/* Empty State for Filtered Results */}
+        {filteredRegularNotes.length === 0 && pinnedNotes.length > 0 && !showPinnedOnly && (
+          <div className="text-center py-16">
+            <div className="w-24 h-24 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Search className="w-12 h-12 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold text-foreground mb-2">
+              검색 결과가 없습니다
+            </h3>
+            <p className="text-muted-foreground mb-6">
+              다른 키워드로 검색해보세요
+            </p>
+          </div>
+        )}
+
+        {/* Empty State for Pinned Filter */}
+        {showPinnedOnly && pinnedNotes.length === 0 && (
+          <div className="text-center py-16">
+            <div className="w-24 h-24 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <PinOff className="w-12 h-12 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold text-foreground mb-2">
+              고정된 메모가 없습니다
+            </h3>
+            <p className="text-muted-foreground mb-6">
+              메모에 핀 아이콘을 클릭하여 고정해보세요
+            </p>
+          </div>
+        )}
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>메모를 삭제하시겠습니까?</AlertDialogTitle>
+              <AlertDialogDescription>
+                "{noteToDelete?.title}" 메모가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={cancelDelete}>취소</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={() => noteToDelete && handleDeleteNote(noteToDelete.id)}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                삭제
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  )
+}
